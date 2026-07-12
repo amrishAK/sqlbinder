@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sqlbinder-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: appdb
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: apppass
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    shm_size: 256mb
+
+  seed:
+    image: postgres:16-alpine
+    container_name: sqlbinder-postgres-seed
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: apppass
+    volumes:
+      - ./seed.sql:/seed.sql:ro
+    command: ["sh", "-c", "psql -h postgres -U appuser -d appdb -v ON_ERROR_STOP=1 -f /seed.sql"]
+
+volumes:
+  postgres_data:
