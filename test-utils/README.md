@@ -1,51 +1,96 @@
 # test-utils
 
-This directory contains local test fixtures for the project’s PostgreSQL development environment.
+Local fixtures used by `sqlbinder` tests and development.
 
-It exists to keep the repository self-contained for testing schema, query mappings, and data-layer behavior without requiring a separate setup process.
+This directory contains:
+- a local PostgreSQL stack plus seed data for relational query testing,
+- filesystem fixtures used by unit tests in `src/utils`.
 
-## What’s inside
+## Directory layout
 
-- `docker-compose.yaml` for starting PostgreSQL locally.
-- `seed.sql` for creating and populating the test database.
+- `postgres/docker-compose.yaml`: local PostgreSQL + one-shot seed service.
+- `postgres/seed.sql`: schema, indexes, and seed rows.
+- `unit-test-resources/settings/`: TOML fixtures for settings parsing and merge tests.
+- `unit-test-resources/secrets/`: secret-file fixtures for password file loading tests.
 
-## Why it exists
+## PostgreSQL fixture
 
-This project is built around explicit SQL, generated mappings, and local validation of schema compatibility, so a small fixture set makes development much easier.
+The compose stack defines:
+- `postgres` (`postgres:16-alpine`) with:
+	- database `appdb`,
+	- user `appuser`,
+	- password `apppass`,
+	- host port `5432` mapped to container `5432`.
+- `seed` (`postgres:16-alpine`) that waits for a healthy database and runs:
+	- `psql -h postgres -U appuser -d appdb -v ON_ERROR_STOP=1 -f /seed.sql`
 
-The seed data includes:
-- basic CRUD records,
-- dataset metadata rows,
-- join-friendly tables,
-- enough variety to test both simple and more complex query paths.
+Seeded tables:
+- `users`
+- `teams`
+- `team_members`
+- `datasets`
+- `dataset_items`
+- `item_tags`
 
-This fixture is intentionally relational-only. Cache data is not part of this seed and should live in a separate store or fixture.
+The seed script also creates indexes and inserts sample rows covering CRUD, joins, filtering, nullable fields, and JSONB metadata queries.
 
-## Seed Tables
+## Quick start (PostgreSQL)
 
-- `users` stores the base people records used by most examples and foreign-key relationships.
-- `teams` groups users together and links back to a team owner.
-- `team_members` models many-to-many membership between users and teams.
-- `datasets` represents higher-level collections owned by teams.
-- `dataset_items` stores item-level records inside a dataset and covers richer column types, nullable fields, and JSON metadata.
-- `item_tags` adds extra labels per item so joins and filtering can be exercised.
+Run from `test-utils/postgres`:
 
-## Quick start
+```bash
+docker compose up -d
+```
 
-1. Start PostgreSQL with Docker Compose on a fresh database volume.
-2. The one-shot seed service will apply `seed.sql` after Postgres becomes healthy.
-3. Point your local Rust config at the seeded database.
+Check service status:
 
-## Notes
+```bash
+docker compose ps
+```
 
-- The seed data is for development and testing only.
-- The schema is intentionally broad enough to support future query identifiers and validation cases.
-- The seed is meant for CRUD, filtering, joins, and other relational query coverage.
-- If you want to reseed from scratch, remove the Postgres volume with `docker compose down -v` and start the stack again.
-- If you add new query examples later, update `seed.sql` first so the fixtures stay aligned.
+Optional: view seed logs:
 
-## Suggested files
+```bash
+docker compose logs seed
+```
 
-- `docker-compose.yaml`
-- `seed.sql`
-- `README.md`
+Stop services:
+
+```bash
+docker compose down
+```
+
+Reset to a fresh database and reseed:
+
+```bash
+docker compose down -v
+docker compose up -d
+```
+
+## Unit-test filesystem fixtures
+
+Rust tests in `src/utils/settings_handler.rs` and `src/utils/secret_handler.rs` load fixtures from:
+- `test-utils/unit-test-resources/settings/`
+- `test-utils/unit-test-resources/secrets/`
+
+Settings fixture behavior covered by tests:
+- `base_valid.toml`: valid single-file settings parsing.
+- `base_without_environment.toml`: missing `environment` falls back to `development`.
+- `invalid.toml`: TOML parse error path.
+- `default_base.toml` + `default_development_override.toml`: merge of `settings.toml` with `settings.<environment>.toml`.
+
+Secrets fixture behavior covered by tests:
+- `db_password_with_newline.txt`: password file loading trims trailing newline/whitespace.
+
+`src/utils/settings_handler.rs` also validates:
+- missing `settings.toml` returns I/O error,
+- missing `database.password_file` returns `MissingPasswordSource`,
+- loaded settings are cached in-process via `OnceLock` by `get_settings()`.
+
+These files are intended for automated tests. Keep fixture updates small and explicit so behavior changes stay reviewable.
+
+## Scope and constraints
+
+- Development/testing only. Not production infrastructure.
+- Relational fixture only; non-relational/cache fixtures are out of scope here.
+- Prefer a fresh Postgres volume when validating seed changes to avoid conflicts with existing local data.

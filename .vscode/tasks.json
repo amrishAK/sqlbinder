@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "cargo test quick",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"test",
+				"-q"
+			],
+			"isBackground": false
+		}
+	]
+}
