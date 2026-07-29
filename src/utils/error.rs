@@ -5,7 +5,7 @@ use thiserror::Error;
 
 /// Enumerates failures that can occur while loading and parsing application settings.
 #[derive(Debug, Error)]
-pub enum SettingsError {
+pub enum AppSettingsError {
 	#[error("I/O error: {0}")]
 	Io(#[from] io::Error),
 	#[error("TOML parsing error: {0}")]

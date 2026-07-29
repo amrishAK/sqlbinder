@@ -8,8 +8,6 @@ pub mod model;
 pub mod secret_handler;
 
 /// Public settings error type.
-pub use error::SettingsError;
+pub use error::AppSettingsError;
 /// Public settings models and default settings file name.
 pub use model::{AppSettings, DatabaseSettings, DEFAULT_SETTINGS_FILE};
-/// Lazily initialized application settings accessor.
-pub use settings_handler::get_settings;

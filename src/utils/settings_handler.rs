@@ -1,37 +1,22 @@
 use std::fs;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use secrecy::SecretString;
 
-use super::error::SettingsError;
+use super::error::AppSettingsError;
 use super::model::{
 	DEFAULT_SETTINGS_FILE,
 	AppSettings,
 };
+
 use super::secret_handler::load_secret_from_file;
 
-static APP_SETTINGS: OnceLock<AppSettings> = OnceLock::new();
-
-/// Return cached application settings, loading and caching them on first access.
-pub fn get_settings() -> Result<AppSettings, SettingsError> {
-	if let Some(settings) = APP_SETTINGS.get() {
-		return Ok(settings.clone());
-	}
-
-	let loaded = AppSettings::from_default_file()?;
-
-	// Another thread may have initialized the lock while we were loading.
-	if APP_SETTINGS.set(loaded.clone()).is_err() {
-		if let Some(settings) = APP_SETTINGS.get() {
-			return Ok(settings.clone());
-		}
-	}
-
-	Ok(loaded)
-}
-
 impl AppSettings {
+
+	pub fn load_settings() -> Result<AppSettings, AppSettingsError> {
+		Self::from_default_file()
+	}
+
 	/// Recursively merge TOML values, replacing scalars and deep-merging tables.
 	fn merge_toml_values(base: &mut toml::Value, overlay: &toml::Value) {
 		match (base, overlay) {
@@ -51,7 +36,7 @@ impl AppSettings {
 	}
 
 	/// Load base settings and optionally merge an environment-specific overlay file.
-	fn from_default_file() -> Result<Self, SettingsError> {
+	fn from_default_file() -> Result<Self, AppSettingsError> {
 		// Load base settings from settings.toml
 		let base_raw = fs::read_to_string(DEFAULT_SETTINGS_FILE)?;
 		let mut base_value: toml::Value = toml::from_str(&base_raw)?;
@@ -75,18 +60,18 @@ impl AppSettings {
 
 	/// Load and deserialize settings from a specific TOML file.
 	#[cfg(test)]
-	fn from_file(path: impl AsRef<Path>) -> Result<Self, SettingsError> {
+	fn from_file(path: impl AsRef<Path>) -> Result<Self, AppSettingsError> {
 		let raw = fs::read_to_string(path)?;
 		toml::from_str(&raw).map_err(Into::into)
 	}
 
 	/// Load the database password from the configured password file.
-	pub fn get_database_password(&self) -> Result<SecretString, SettingsError> {
+	pub fn get_database_password(&self) -> Result<SecretString, AppSettingsError> {
 		let path = self
 			.database
 			.password_file
 			.as_deref()
-			.ok_or(SettingsError::MissingPasswordSource)?;
+			.ok_or(AppSettingsError::MissingPasswordSource)?;
 
 		load_secret_from_file(path)
 	}
@@ -155,7 +140,7 @@ mod tests {
 
 		let result = AppSettings::from_file(&settings_file);
 
-		assert!(matches!(result, Err(SettingsError::ParseToml(_))));
+		assert!(matches!(result, Err(AppSettingsError::ParseToml(_))));
 	}
 
 	#[test]
@@ -203,7 +188,7 @@ mod tests {
 		std::env::set_current_dir(original_cwd).expect("should restore original working directory");
 		fs::remove_dir_all(temp_dir).expect("temp directory should be removed");
 
-		assert!(matches!(result, Err(SettingsError::Io(_))));
+		assert!(matches!(result, Err(AppSettingsError::Io(_))));
 	}
 
 	#[test]
@@ -246,6 +231,6 @@ mod tests {
 
 		let result = settings.get_database_password();
 
-		assert!(matches!(result, Err(SettingsError::MissingPasswordSource)));
+		assert!(matches!(result, Err(AppSettingsError::MissingPasswordSource)));
 	}
 }

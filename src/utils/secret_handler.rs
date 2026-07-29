@@ -3,9 +3,9 @@ use std::path::Path;
 
 use secrecy::SecretString;
 
-use super::error::SettingsError;
+use super::error::AppSettingsError;
 
-pub(crate) fn load_secret_from_file(path: impl AsRef<Path>) -> Result<SecretString, SettingsError> {
+pub(crate) fn load_secret_from_file(path: impl AsRef<Path>) -> Result<SecretString, AppSettingsError> {
 	let content = fs::read_to_string(path)?;
 	// Intentionally normalize secret files that end with line breaks/whitespace.
 	Ok(SecretString::from(content.trim_end().to_owned()))
@@ -41,6 +41,6 @@ mod tests {
 
 		let result = load_secret_from_file(&missing_file);
 
-		assert!(matches!(result, Err(SettingsError::Io(_))));
+		assert!(matches!(result, Err(AppSettingsError::Io(_))));
 	}
 }
