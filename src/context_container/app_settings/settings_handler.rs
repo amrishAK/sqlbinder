@@ -87,7 +87,7 @@ mod tests {
 	use secrecy::ExposeSecret;
 
 	use super::*;
-	use crate::utils::model::DatabaseSettings;
+	use crate::context_container::DatabaseSettings;
 
 	fn fixture_path(relative: &str) -> PathBuf {
 		PathBuf::from(env!("CARGO_MANIFEST_DIR"))
