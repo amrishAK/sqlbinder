@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::ContextContainer;
 use super::ContextContainerError;
-use super::app_settings::AppSettings;
+use super::app_settings::{AppSettings, DatabaseSettings};
 
 impl ContextContainer {
 
@@ -17,14 +17,18 @@ impl ContextContainer {
         })
     }
 
-    /// Return a shared handle to application settings.
-    pub fn get_app_settings(&self) -> Arc<AppSettings> {
-        self.app_settings.clone()
+    /// Return a cloned database settings snapshot wrapped in an Arc.
+    pub fn get_database_settings(&self) -> Arc<DatabaseSettings> {
+        Arc::new(self.get_app_settings().database.clone())
     }
 
     /// Read the configured environment name from settings.
     pub fn get_environment_name(&self) -> String {
         self.app_settings.environment.clone()
+    }
+
+    fn get_app_settings(&self) -> Arc<AppSettings> {
+        Arc::clone(&self.app_settings)
     }
 }
 
@@ -32,13 +36,13 @@ impl ContextContainer {
 mod tests {
     use std::sync::Arc;
 
-    use super::super::app_settings::DatabaseSettings;
+    use super::super::app_settings::{DatabaseSettings, PostgresSettings};
     use super::*;
 
     fn test_app_settings(environment: &str) -> AppSettings {
         AppSettings {
             environment: environment.to_owned(),
-            database: DatabaseSettings {
+            database: DatabaseSettings::Postgres(PostgresSettings {
                 host: "localhost".to_owned(),
                 port: 5432,
                 user: "postgres".to_owned(),
@@ -47,7 +51,7 @@ mod tests {
                 max_connections: 5,
                 connect_timeout_secs: 10,
                 ssl_mode: "disable".to_owned(),
-            },
+            }),
         }
     }
 
@@ -71,10 +75,14 @@ mod tests {
         };
 
         let retrieved = container.get_app_settings();
+        let database = retrieved
+            .database
+            .postgres()
+            .expect("expected postgres settings");
 
         assert_eq!(retrieved.environment, "production");
-        assert_eq!(retrieved.database.host, "localhost");
-        assert_eq!(retrieved.database.port, 5432);
+        assert_eq!(database.host, "localhost");
+        assert_eq!(database.port, 5432);
     }
 
     #[test]
@@ -102,8 +110,12 @@ mod tests {
 
         // Verify the container is fully initialized and ready to use
         let settings = container.get_app_settings();
+        let database = settings
+            .database
+            .postgres()
+            .expect("expected postgres settings");
         assert_eq!(settings.environment, "test");
-        assert_eq!(settings.database.port, 5432);
+        assert_eq!(database.port, 5432);
     }
 
     #[test]
@@ -120,7 +132,12 @@ mod tests {
 
         // Settings are always accessible, making invalid states impossible
         assert_eq!(environment, settings.environment);
-        assert!(!settings.database.host.is_empty());
+        assert!(!settings
+            .database
+            .postgres()
+            .expect("expected postgres settings")
+            .host
+            .is_empty());
     }
 
     #[test]
@@ -128,7 +145,7 @@ mod tests {
         // Create settings matching the base_valid.toml test resource structure
         let app_settings = AppSettings {
             environment: "development".to_owned(),
-            database: DatabaseSettings {
+            database: DatabaseSettings::Postgres(PostgresSettings {
                 host: "localhost".to_owned(),
                 port: 5432,
                 user: "appuser".to_owned(),
@@ -137,7 +154,7 @@ mod tests {
                 max_connections: 10,
                 connect_timeout_secs: 5,
                 ssl_mode: "disable".to_owned(),
-            },
+            }),
         };
         let container = ContextContainer {
             app_settings: Arc::new(app_settings),
@@ -145,19 +162,23 @@ mod tests {
 
         let retrieved_env = container.get_environment_name();
         let retrieved_settings = container.get_app_settings();
+        let database = retrieved_settings
+            .database
+            .postgres()
+            .expect("expected postgres settings");
 
         assert_eq!(retrieved_env, "development");
-        assert_eq!(retrieved_settings.database.host, "localhost");
-        assert_eq!(retrieved_settings.database.port, 5432);
-        assert_eq!(retrieved_settings.database.user, "appuser");
-        assert_eq!(retrieved_settings.database.max_connections, 10);
+		assert_eq!(database.host, "localhost");
+		assert_eq!(database.port, 5432);
+		assert_eq!(database.user, "appuser");
+		assert_eq!(database.max_connections, 10);
     }
 
     #[test]
     fn container_preserves_password_file_path_success() {
         let app_settings = AppSettings {
             environment: "production".to_owned(),
-            database: DatabaseSettings {
+            database: DatabaseSettings::Postgres(PostgresSettings {
                 host: "db.example.com".to_owned(),
                 port: 5432,
                 user: "produser".to_owned(),
@@ -166,17 +187,21 @@ mod tests {
                 max_connections: 20,
                 connect_timeout_secs: 10,
                 ssl_mode: "require".to_owned(),
-            },
+            }),
         };
         let container = ContextContainer {
             app_settings: Arc::new(app_settings),
         };
 
         let settings = container.get_app_settings();
+        let database = settings
+            .database
+            .postgres()
+            .expect("expected postgres settings");
 
         // Verify password file path is accessible through container
         assert_eq!(
-            settings.database.password_file.as_deref(),
+            database.password_file.as_deref(),
             Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt")
         );
     }

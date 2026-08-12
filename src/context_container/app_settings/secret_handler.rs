@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
 use super::error::AppSettingsError;
 
@@ -9,6 +9,26 @@ pub(crate) fn load_secret_from_file(path: impl AsRef<Path>) -> Result<SecretStri
 	let content = fs::read_to_string(path)?;
 	// Intentionally normalize secret files that end with line breaks/whitespace.
 	Ok(SecretString::from(content.trim_end().to_owned()))
+}
+
+pub(crate) fn validate_secret_file(path: impl AsRef<Path>) -> Result<(), AppSettingsError> {
+	let secret = load_secret_from_file(path)?;
+	if secret.expose_secret().is_empty() {
+		return Err(AppSettingsError::InvalidConfig(
+			"Secret file cannot be empty".to_string(),
+		));
+	}
+	Ok(())
+}
+
+pub(crate) fn validate_required_secret_file(path: Option<&str>) -> Result<(), AppSettingsError> {
+	let path = path.ok_or_else(|| {
+		AppSettingsError::InvalidConfig(
+			"Database password_file is required but not provided".to_string(),
+		)
+	})?;
+
+	validate_secret_file(path)
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 environment = "development"
+database_type = "postgres"
 
 [database]
 host = "localhost"

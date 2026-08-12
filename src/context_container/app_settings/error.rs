@@ -22,4 +22,8 @@ pub enum AppSettingsError {
 	SettingsNotInitialized,
 	#[error("settings have already been initialized")]
 	SettingsAlreadyInitialized,
+	#[error("invalid database backend type: {0}")]
+	InvalidDbType(String),
+	#[error("invalid configuration: {0}")]
+	InvalidConfig(String),
 }
