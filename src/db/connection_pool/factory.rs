@@ -2,7 +2,7 @@ use crate::context_container::app_settings::model::DatabaseSettings;
 
 use super::error::DbConnectionError;
 use super::model::DbConnectionPool;
-use super::{pg, sqlite};
+use crate::db::{pg, sqlite};
 
 pub fn get_connection_pool(settings: &DatabaseSettings) -> Result<DbConnectionPool, DbConnectionError> {
     settings.validate().map_err(DbConnectionError::Settings)?;

@@ -4,9 +4,9 @@ use std::time::Duration;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use crate::context_container::app_settings::model::{SqliteInMemorySettings, SqliteSettings};
+use crate::db::connection_pool::error::DbConnectionError;
 
 use super::model::SqlitePool;
-use crate::db::error::DbConnectionError;
 
 pub(crate) fn get_sqlite_pool(database_settings: &SqliteSettings) -> Result<SqlitePool, DbConnectionError> {
     let options = create_connection_options(database_settings)?;

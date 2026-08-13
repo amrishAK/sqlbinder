@@ -5,9 +5,9 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 
 use crate::context_container::app_settings::model::PostgresSettings;
 use crate::context_container::app_settings::secret_handler;
+use crate::db::connection_pool::error::DbConnectionError;
 
 use super::model::PostgresPool;
-use crate::db::error::DbConnectionError;
 
 pub(crate) fn get_pg_pool(database_settings: &PostgresSettings) -> Result<PostgresPool, DbConnectionError> {
     let options = build_connect_options(database_settings)?;

@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 /// PostgreSQL pool model used by the service-level database context.
 pub struct PostgresPool {
     pool: sqlx::PgPool,

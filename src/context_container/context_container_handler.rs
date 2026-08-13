@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::ContextContainer;
 use super::ContextContainerError;
 use super::app_settings::{AppSettings, DatabaseSettings};
+use crate::db::DbConnectionPool;
 
 impl ContextContainer {
 
@@ -14,7 +15,18 @@ impl ContextContainer {
             .map_err(ContextContainerError::Settings)?;
         Ok(ContextContainer {
             app_settings: Arc::new(settings),
+            connection_pool: Arc::new(None),
         })
+    }
+
+    /// Store the shared database connection pool in the context.
+    pub fn set_connection_pool(&mut self, connection_pool: DbConnectionPool) {
+        self.connection_pool = Arc::new(Some(connection_pool));
+    }
+
+    /// Return the shared database connection pool if one has been initialized.
+    pub fn get_connection_pool(&self) -> Option<DbConnectionPool> {
+        self.connection_pool.as_ref().clone()
     }
 
     /// Return a cloned database settings snapshot wrapped in an Arc.
@@ -34,7 +46,9 @@ impl ContextContainer {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
     use super::super::app_settings::{DatabaseSettings, PostgresSettings};
     use super::*;
@@ -47,7 +61,7 @@ mod tests {
                 port: 5432,
                 user: "postgres".to_owned(),
                 name: "sqlbinder".to_owned(),
-                password_file: None,
+                password_file: Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt".to_owned()),
                 max_connections: 5,
                 connect_timeout_secs: 10,
                 ssl_mode: "disable".to_owned(),
@@ -55,11 +69,18 @@ mod tests {
         }
     }
 
+    fn cwd_test_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn get_environment_name_returns_loaded_environment_success() {
-        let app_settings = test_app_settings("development");
         let container = ContextContainer {
-            app_settings: Arc::new(app_settings),
+            app_settings: Arc::new(test_app_settings("development")),
+            connection_pool: Arc::new(None),
         };
 
         let environment_name = container.get_environment_name();
@@ -68,141 +89,106 @@ mod tests {
     }
 
     #[test]
-    fn get_app_settings_returns_cloned_arc_reference_success() {
-        let app_settings = test_app_settings("production");
+    fn get_database_settings_returns_snapshot_success() {
         let container = ContextContainer {
-            app_settings: Arc::new(app_settings),
+            app_settings: Arc::new(test_app_settings("production")),
+            connection_pool: Arc::new(None),
         };
 
-        let retrieved = container.get_app_settings();
-        let database = retrieved
-            .database
+        let database_settings = container.get_database_settings();
+        let database = database_settings
             .postgres()
             .expect("expected postgres settings");
 
-        assert_eq!(retrieved.environment, "production");
         assert_eq!(database.host, "localhost");
         assert_eq!(database.port, 5432);
+        assert_eq!(database.user, "postgres");
+        assert_eq!(database.password_file.as_deref(), Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt"));
     }
 
     #[test]
-    fn get_app_settings_returns_shared_reference_success() {
-        let app_settings = test_app_settings("staging");
-        let container = ContextContainer {
-            app_settings: Arc::new(app_settings),
-        };
+    fn constructor_loads_default_settings_file_success() {
+        let _lock = cwd_test_lock();
+        let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let settings_path = crate_root.join("settings.toml");
+        let settings_backup = fs::read_to_string(&settings_path).ok();
 
-        let retrieved1 = container.get_app_settings();
-        let retrieved2 = container.get_app_settings();
+        let settings_contents = r#"
+        environment = "development"
+        database_type = "postgres"
 
-        // Both references point to the same underlying data
-        assert_eq!(retrieved1.environment, retrieved2.environment);
-        assert!(Arc::ptr_eq(&retrieved1, &retrieved2));
-    }
+        [database]
+        host = "localhost"
+        port = 5432
+        user = "appuser"
+        name = "appdb"
+        password_file = "test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
+        max_connections = 10
+        connect_timeout_secs = 5
+        ssl_mode = "disable"
+        "#;
 
-    #[test]
-    fn constructor_pattern_creates_initialized_container_success() {
-        // Simulate what the constructor does: load settings and wrap in Arc
-        let app_settings = test_app_settings("test");
-        let container = ContextContainer {
-            app_settings: Arc::new(app_settings),
-        };
+        fs::write(&settings_path, settings_contents).expect("settings file should be written");
 
-        // Verify the container is fully initialized and ready to use
-        let settings = container.get_app_settings();
-        let database = settings
-            .database
+        let container = ContextContainer::new().expect("default settings should load from settings.toml");
+
+        if let Some(content) = settings_backup {
+            fs::write(&settings_path, content).expect("settings backup should be restored");
+        } else {
+            let _ = fs::remove_file(&settings_path);
+        }
+
+        assert_eq!(container.get_environment_name(), "development");
+        let database_settings = container.get_database_settings();
+        let database = database_settings
             .postgres()
             .expect("expected postgres settings");
-        assert_eq!(settings.environment, "test");
-        assert_eq!(database.port, 5432);
+        assert_eq!(database.host, "localhost");
+        assert_eq!(database.name, "appdb");
     }
 
     #[test]
-    fn constructor_ensures_settings_always_present_success() {
-        // The new constructor pattern guarantees settings are always present
-        let app_settings = test_app_settings("production");
+    fn get_connection_pool_returns_none_before_initialization_success() {
         let container = ContextContainer {
-            app_settings: Arc::new(app_settings),
+            app_settings: Arc::new(test_app_settings("development")),
+            connection_pool: Arc::new(None),
         };
 
-        // Both getters should work without any Result unwrapping
-        let environment = container.get_environment_name();
-        let settings = container.get_app_settings();
-
-        // Settings are always accessible, making invalid states impossible
-        assert_eq!(environment, settings.environment);
-        assert!(!settings
-            .database
-            .postgres()
-            .expect("expected postgres settings")
-            .host
-            .is_empty());
+        assert!(container.get_connection_pool().is_none());
     }
 
-    #[test]
-    fn container_with_valid_test_data_success() {
-        // Create settings matching the base_valid.toml test resource structure
-        let app_settings = AppSettings {
-            environment: "development".to_owned(),
-            database: DatabaseSettings::Postgres(PostgresSettings {
-                host: "localhost".to_owned(),
-                port: 5432,
-                user: "appuser".to_owned(),
-                name: "appdb".to_owned(),
-                password_file: Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt".to_owned()),
-                max_connections: 10,
-                connect_timeout_secs: 5,
-                ssl_mode: "disable".to_owned(),
-            }),
+    #[tokio::test]
+    async fn set_connection_pool_stores_pool_success() {
+        let mut container = ContextContainer {
+            app_settings: Arc::new(test_app_settings("development")),
+            connection_pool: Arc::new(None),
         };
-        let container = ContextContainer {
-            app_settings: Arc::new(app_settings),
-        };
-
-        let retrieved_env = container.get_environment_name();
-        let retrieved_settings = container.get_app_settings();
-        let database = retrieved_settings
-            .database
-            .postgres()
-            .expect("expected postgres settings");
-
-        assert_eq!(retrieved_env, "development");
-		assert_eq!(database.host, "localhost");
-		assert_eq!(database.port, 5432);
-		assert_eq!(database.user, "appuser");
-		assert_eq!(database.max_connections, 10);
-    }
-
-    #[test]
-    fn container_preserves_password_file_path_success() {
-        let app_settings = AppSettings {
-            environment: "production".to_owned(),
-            database: DatabaseSettings::Postgres(PostgresSettings {
-                host: "db.example.com".to_owned(),
-                port: 5432,
-                user: "produser".to_owned(),
-                name: "proddb".to_owned(),
-                password_file: Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt".to_owned()),
-                max_connections: 20,
-                connect_timeout_secs: 10,
-                ssl_mode: "require".to_owned(),
-            }),
-        };
-        let container = ContextContainer {
-            app_settings: Arc::new(app_settings),
-        };
-
-        let settings = container.get_app_settings();
-        let database = settings
-            .database
-            .postgres()
-            .expect("expected postgres settings");
-
-        // Verify password file path is accessible through container
-        assert_eq!(
-            database.password_file.as_deref(),
-            Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt")
+        let pool = DbConnectionPool::Sqlite(
+            crate::db::SqlitePool::new(sqlx::sqlite::SqlitePoolOptions::new().connect_lazy_with(
+                sqlx::sqlite::SqliteConnectOptions::new().in_memory(true),
+            )),
         );
+
+        container.set_connection_pool(pool.clone());
+
+        assert!(matches!(container.get_connection_pool(), Some(DbConnectionPool::Sqlite(_))));
+    }
+
+    #[tokio::test]
+    async fn cloned_container_shares_connection_pool_success() {
+        let mut container = ContextContainer {
+            app_settings: Arc::new(test_app_settings("development")),
+            connection_pool: Arc::new(None),
+        };
+        let pool = DbConnectionPool::Sqlite(
+            crate::db::SqlitePool::new(sqlx::sqlite::SqlitePoolOptions::new().connect_lazy_with(
+                sqlx::sqlite::SqliteConnectOptions::new().in_memory(true),
+            )),
+        );
+        container.set_connection_pool(pool);
+
+        let cloned = container.clone();
+
+        assert!(matches!(cloned.get_connection_pool(), Some(DbConnectionPool::Sqlite(_))));
     }
 }

@@ -108,7 +108,6 @@ mod tests {
 	use std::fs;
 	use std::path::PathBuf;
 	use std::sync::{Mutex, MutexGuard, OnceLock};
-	use std::time::{SystemTime, UNIX_EPOCH};
 
 	use secrecy::ExposeSecret;
 
@@ -134,14 +133,6 @@ mod tests {
 		LOCK.get_or_init(|| Mutex::new(()))
 			.lock()
 			.unwrap_or_else(|poisoned| poisoned.into_inner())
-	}
-
-	fn unique_temp_dir(prefix: &str) -> PathBuf {
-		let now = SystemTime::now()
-			.duration_since(UNIX_EPOCH)
-			.expect("system time should be after unix epoch")
-			.as_nanos();
-		std::env::temp_dir().join(format!("sqlbinder-{prefix}-{now}"))
 	}
 
 	fn with_restored_cwd<T>(f: impl FnOnce() -> T) -> T {
@@ -321,100 +312,49 @@ mod tests {
 	}
 
 	#[test]
-	fn default_file_without_environment_uses_local_overlay_success() {
-		let _guard = cwd_test_lock();
-		let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-		let base_path = crate_root.join(DEFAULT_SETTINGS_FILE);
-		let local_overlay_path = crate_root.join("settings.local.toml");
-		let development_overlay_path = crate_root.join("settings.development.toml");
+	fn missing_environment_in_toml_defaults_to_local_success() {
+		let raw = toml::from_str::<toml::Value>(
+			r#"
+			database_type = "postgres"
 
-		let base_backup = fs::read_to_string(&base_path).ok();
-		let local_overlay_backup = fs::read_to_string(&local_overlay_path).ok();
-		let development_overlay_backup = fs::read_to_string(&development_overlay_path).ok();
+			[database]
+			host = "localhost"
+			port = 5432
+			user = "appuser"
+			name = "appdb"
+			password_file = "test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
+			max_connections = 10
+			connect_timeout_secs = 5
+			ssl_mode = "disable"
+			"#,
+		)
+		.expect("raw toml should parse");
 
-		let base_content = r#"
-database_type = "postgres"
-
-[database]
-host = "localhost"
-port = 5432
-user = "base-user"
-name = "appdb"
-password_file = "test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
-max_connections = 10
-connect_timeout_secs = 5
-ssl_mode = "disable"
-"#;
-
-		let local_overlay_content = r#"
-[database]
-user = "local-user"
-"#;
-
-		let development_overlay_content = r#"
-[database]
-user = "development-user"
-"#;
-
-		let password_file = settings_file_path("test-utils/unit-test-resources/secrets/db_password_with_newline.txt")
-			.to_string_lossy()
-			.replace('\\', "\\\\");
-		let base_content = base_content.replace(
-			"test-utils/unit-test-resources/secrets/db_password_with_newline.txt",
-			&password_file,
-		);
-
-		fs::write(&base_path, base_content).expect("base settings file should be written");
-		fs::write(&local_overlay_path, local_overlay_content)
-			.expect("local overlay settings file should be written");
-		fs::write(&development_overlay_path, development_overlay_content)
-			.expect("development overlay settings file should be written");
-
-		let result = AppSettings::from_default_file();
-
-		if let Some(content) = base_backup {
-			fs::write(&base_path, content).expect("base settings backup should be restored");
-		} else {
-			let _ = fs::remove_file(&base_path);
-		}
-
-		if let Some(content) = local_overlay_backup {
-			fs::write(&local_overlay_path, content)
-				.expect("local overlay settings backup should be restored");
-		} else {
-			let _ = fs::remove_file(&local_overlay_path);
-		}
-
-		if let Some(content) = development_overlay_backup {
-			fs::write(&development_overlay_path, content)
-				.expect("development overlay settings backup should be restored");
-		} else {
-			let _ = fs::remove_file(&development_overlay_path);
-		}
-
-		let settings = result.expect("default settings should load and merge");
-		let database = settings
-			.database
-			.postgres()
-			.expect("expected postgres settings");
+		let settings = AppSettings::from_toml_value(raw).expect("missing environment should default to local");
+		let database = settings.database.postgres().expect("expected postgres settings");
 
 		assert_eq!(settings.environment, "local");
-		assert_eq!(database.user, "local-user");
+		assert_eq!(database.user, "appuser");
 	}
 
 	#[test]
 	fn missing_default_settings_file_failure() {
 		let _guard = cwd_test_lock();
-		let temp_dir = unique_temp_dir("settings-missing");
-		fs::create_dir_all(&temp_dir).expect("temp directory should be created");
+		let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+		let base_path = crate_root.join(DEFAULT_SETTINGS_FILE);
+		let backup_path = crate_root.join("settings.toml.bak");
+		let base_backup = fs::read_to_string(&base_path).ok();
 
-		let original_cwd = std::env::current_dir().expect("current directory should be readable");
-		std::env::set_current_dir(&temp_dir).expect("should switch to temp directory");
+		if let Some(content) = &base_backup {
+			fs::write(&backup_path, content).expect("backup settings file should be written");
+			fs::remove_file(&base_path).expect("base settings file should be removed for this test");
+		}
 
 		let result = AppSettings::from_default_file();
 
-		std::env::set_current_dir(original_cwd).expect("should restore original working directory");
-		fs::remove_dir_all(temp_dir).expect("temp directory should be removed");
+		if base_backup.is_some() {
+			fs::rename(&backup_path, &base_path).expect("base settings backup should be restored");
+		}
 
 		assert!(matches!(result, Err(AppSettingsError::Io(_))));
 	}

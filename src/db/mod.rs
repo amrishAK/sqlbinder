@@ -1,11 +1,9 @@
-pub mod error;
-pub mod factory;
-pub mod model;
+pub mod connection_pool;
 mod pg;
 mod sqlite;
 
-pub use error::DbConnectionError;
-pub use factory::get_connection_pool;
+pub use connection_pool::DbConnectionError;
+pub use connection_pool::DbConnectionPool;
+pub use connection_pool::get_connection_pool;
 pub use pg::model::PostgresPool;
-pub use model::DbConnectionPool;
 pub use sqlite::model::SqlitePool;

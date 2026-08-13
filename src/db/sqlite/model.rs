@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 /// SQLite pool model used by the service-level database context.
 pub struct SqlitePool {
     pool: sqlx::SqlitePool,
