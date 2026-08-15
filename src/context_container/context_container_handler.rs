@@ -48,10 +48,11 @@ impl ContextContainer {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+    use std::sync::Arc;
 
     use super::super::app_settings::{DatabaseSettings, PostgresSettings};
     use super::*;
+    use crate::context_container::shared_cwd_test_lock;
 
     fn test_app_settings(environment: &str) -> AppSettings {
         AppSettings {
@@ -67,13 +68,6 @@ mod tests {
                 ssl_mode: "disable".to_owned(),
             }),
         }
-    }
-
-    fn cwd_test_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     #[test]
@@ -108,7 +102,7 @@ mod tests {
 
     #[test]
     fn constructor_loads_default_settings_file_success() {
-        let _lock = cwd_test_lock();
+        let _lock = shared_cwd_test_lock();
         let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let settings_path = crate_root.join("settings.toml");
         let settings_backup = fs::read_to_string(&settings_path).ok();

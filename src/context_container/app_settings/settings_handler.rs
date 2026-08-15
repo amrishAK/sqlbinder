@@ -107,7 +107,6 @@ impl AppSettings {
 mod tests {
 	use std::fs;
 	use std::path::PathBuf;
-	use std::sync::{Mutex, MutexGuard, OnceLock};
 
 	use secrecy::ExposeSecret;
 
@@ -115,6 +114,7 @@ mod tests {
 	use crate::context_container::DatabaseSettings;
 	use crate::context_container::app_settings::PostgresSettings;
 	use crate::context_container::app_settings::model::DEFAULT_SETTINGS_FILE;
+	use crate::context_container::shared_cwd_test_lock;
 
 	fn fixture_path(relative: &str) -> PathBuf {
 		PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -126,13 +126,6 @@ mod tests {
 	fn settings_file_path(relative: &str) -> PathBuf {
 		PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 			.join(relative)
-	}
-
-	fn cwd_test_lock() -> MutexGuard<'static, ()> {
-		static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-		LOCK.get_or_init(|| Mutex::new(()))
-			.lock()
-			.unwrap_or_else(|poisoned| poisoned.into_inner())
 	}
 
 	fn with_restored_cwd<T>(f: impl FnOnce() -> T) -> T {
@@ -256,7 +249,7 @@ mod tests {
 
 	#[test]
 	fn default_file_and_environment_override_merge_success() {
-		let _guard = cwd_test_lock();
+		let _guard = shared_cwd_test_lock();
 		let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 		let base_path = crate_root.join(DEFAULT_SETTINGS_FILE);
 		let overlay_path = crate_root.join("settings.development.toml");
@@ -339,7 +332,7 @@ mod tests {
 
 	#[test]
 	fn missing_default_settings_file_failure() {
-		let _guard = cwd_test_lock();
+		let _guard = shared_cwd_test_lock();
 		let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 		let base_path = crate_root.join(DEFAULT_SETTINGS_FILE);
 		let backup_path = crate_root.join("settings.toml.bak");
