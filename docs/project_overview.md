@@ -1,6 +1,6 @@
 # Project Overview
 
-sqlbinder is a deployable SQL execution service and not a reusable library. The intended deployment model is a containerized runtime that starts with user-provided application settings, SQL query definitions, and request/response mapping definitions.
+The intent of sqlbinder is to provide a deployable, containerized SQL execution service. It is designed to start with user-provided application settings, SQL query definitions, and request/response mapping definitions, then execute configured operations through a shared database pool. It is not intended to be a general-purpose reusable library.
 
 ## Service Requirement
 
@@ -67,3 +67,22 @@ The repository should evolve toward this architecture by keeping:
 4. Docker-friendly test resources under `test-utils/` and `unit-test-resources/`.
 
 The target design is a pooled-only service architecture aligned to the requirement above.
+
+## Current Status
+
+The repository currently contains the database, configuration, query execution, and result formatting foundations for the target service:
+
+- Application settings are loaded from `settings.toml` through `src/context_container/app_settings/`.
+- Settings are parsed into typed application and database models, including PostgreSQL, file-backed SQLite, and SQLite in-memory modes.
+- Database settings validation covers required fields, connection limits, timeouts, PostgreSQL SSL mode, password-file requirements, and SQLite path rules.
+- Database passwords are loaded from configured secret files instead of being stored directly in the typed settings.
+- `ContextContainer` owns application settings and can store a shared `DbConnectionPool`.
+- `get_connection_pool()` resolves the configured backend and creates a lazy, shared PostgreSQL or SQLite pool.
+- Backend pool creation is isolated under `src/db/pg/` and `src/db/sqlite/`.
+- The executable entry point loads settings, initializes the configured lazy pool, stores it in `ContextContainer`, and reports the active environment.
+- `QueryExecutor` executes read and write SQL against either supported backend.
+- Query rows are converted into backend-independent column and `DbValue` structures.
+- Query results can be converted into a JSON-compatible envelope containing `count` and `items`.
+- Unit tests cover settings parsing and validation, secret loading, pool factory dispatch, SQLite path validation, query execution, row mapping, and result formatting.
+
+The next implementation scope is the request-facing service layer: REST endpoints, external query and mapping definitions, route and operation resolution, request-to-query input mapping, response mapping, and explicit per-request connection and execution context handling. The existing startup path currently initializes configuration and the shared lazy database pool; end-to-end request execution will build on that foundation.
