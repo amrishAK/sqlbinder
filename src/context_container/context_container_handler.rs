@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::ContextContainer;
 use super::ContextContainerError;
@@ -15,18 +15,20 @@ impl ContextContainer {
             .map_err(ContextContainerError::Settings)?;
         Ok(ContextContainer {
             app_settings: Arc::new(settings),
-            connection_pool: Arc::new(None),
+            connection_pool: Arc::new(OnceLock::new()),
         })
     }
 
     /// Store the shared database connection pool in the context.
-    pub fn set_connection_pool(&mut self, connection_pool: DbConnectionPool) {
-        self.connection_pool = Arc::new(Some(connection_pool));
+    pub fn set_connection_pool(&self, connection_pool: DbConnectionPool) {
+        self.connection_pool
+            .set(connection_pool)
+            .expect("connection pool can only be initialized once");
     }
 
     /// Return the shared database connection pool if one has been initialized.
     pub fn get_connection_pool(&self) -> Option<DbConnectionPool> {
-        self.connection_pool.as_ref().clone()
+        self.connection_pool.get().cloned()
     }
 
     /// Return a cloned database settings snapshot wrapped in an Arc.
@@ -62,7 +64,7 @@ mod tests {
                 port: 5432,
                 user: "postgres".to_owned(),
                 name: "sqlbinder".to_owned(),
-                password_file: Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt".to_owned()),
+                password_file: Some("tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt".to_owned()),
                 max_connections: 5,
                 connect_timeout_secs: 10,
                 ssl_mode: "disable".to_owned(),
@@ -74,7 +76,7 @@ mod tests {
     fn get_environment_name_returns_loaded_environment_success() {
         let container = ContextContainer {
             app_settings: Arc::new(test_app_settings("development")),
-            connection_pool: Arc::new(None),
+            connection_pool: Arc::new(OnceLock::new()),
         };
 
         let environment_name = container.get_environment_name();
@@ -86,7 +88,7 @@ mod tests {
     fn get_database_settings_returns_snapshot_success() {
         let container = ContextContainer {
             app_settings: Arc::new(test_app_settings("production")),
-            connection_pool: Arc::new(None),
+            connection_pool: Arc::new(OnceLock::new()),
         };
 
         let database_settings = container.get_database_settings();
@@ -97,7 +99,7 @@ mod tests {
         assert_eq!(database.host, "localhost");
         assert_eq!(database.port, 5432);
         assert_eq!(database.user, "postgres");
-        assert_eq!(database.password_file.as_deref(), Some("test-utils/unit-test-resources/secrets/db_password_with_newline.txt"));
+        assert_eq!(database.password_file.as_deref(), Some("tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt"));
     }
 
     #[test]
@@ -116,7 +118,7 @@ mod tests {
         port = 5432
         user = "appuser"
         name = "appdb"
-        password_file = "test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
+        password_file = "tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
         max_connections = 10
         connect_timeout_secs = 5
         ssl_mode = "disable"
@@ -145,7 +147,7 @@ mod tests {
     fn get_connection_pool_returns_none_before_initialization_success() {
         let container = ContextContainer {
             app_settings: Arc::new(test_app_settings("development")),
-            connection_pool: Arc::new(None),
+            connection_pool: Arc::new(OnceLock::new()),
         };
 
         assert!(container.get_connection_pool().is_none());
@@ -153,9 +155,9 @@ mod tests {
 
     #[tokio::test]
     async fn set_connection_pool_stores_pool_success() {
-        let mut container = ContextContainer {
+        let container = ContextContainer {
             app_settings: Arc::new(test_app_settings("development")),
-            connection_pool: Arc::new(None),
+            connection_pool: Arc::new(OnceLock::new()),
         };
         let pool = DbConnectionPool::Sqlite(
             crate::db::SqlitePool::new(sqlx::sqlite::SqlitePoolOptions::new().connect_lazy_with(
@@ -170,18 +172,17 @@ mod tests {
 
     #[tokio::test]
     async fn cloned_container_shares_connection_pool_success() {
-        let mut container = ContextContainer {
+        let container = ContextContainer {
             app_settings: Arc::new(test_app_settings("development")),
-            connection_pool: Arc::new(None),
+            connection_pool: Arc::new(OnceLock::new()),
         };
+        let cloned = container.clone();
         let pool = DbConnectionPool::Sqlite(
             crate::db::SqlitePool::new(sqlx::sqlite::SqlitePoolOptions::new().connect_lazy_with(
                 sqlx::sqlite::SqliteConnectOptions::new().in_memory(true),
             )),
         );
         container.set_connection_pool(pool);
-
-        let cloned = container.clone();
 
         assert!(matches!(cloned.get_connection_pool(), Some(DbConnectionPool::Sqlite(_))));
     }

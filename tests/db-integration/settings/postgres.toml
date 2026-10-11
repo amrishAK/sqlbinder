@@ -1,0 +1,12 @@
+environment = "local"
+database_type = "postgres"
+
+[database]
+host = "localhost"
+port = 5432
+user = "appuser"
+name = "appdb"
+password_file = "tests/db-integration/settings/postgres_password.txt"
+max_connections = 5
+connect_timeout_secs = 5
+ssl_mode = "disable"

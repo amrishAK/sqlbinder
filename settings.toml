@@ -1,0 +1,14 @@
+
+        environment = "development"
+        database_type = "postgres"
+
+        [database]
+        host = "localhost"
+        port = 5432
+        user = "appuser"
+        name = "appdb"
+        password_file = "tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
+        max_connections = 10
+        connect_timeout_secs = 5
+        ssl_mode = "disable"
+        

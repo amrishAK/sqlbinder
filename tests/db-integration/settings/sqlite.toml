@@ -1,0 +1,6 @@
+environment = "local"
+database_type = "in-memory"
+
+[database]
+max_connections = 1
+connect_timeout_secs = 5

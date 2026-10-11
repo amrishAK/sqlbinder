@@ -41,6 +41,7 @@ mod tests {
 
 	fn fixture_path(relative: &str) -> PathBuf {
 		PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+			.join("tests")
 			.join("test-utils")
 			.join("unit-test-resources")
 			.join(relative)

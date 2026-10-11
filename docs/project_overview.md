@@ -1,88 +1,89 @@
 # Project Overview
 
-The intent of sqlbinder is to provide a deployable, containerized SQL execution service. It is designed to start with user-provided application settings, SQL query definitions, and request/response mapping definitions, then execute configured operations through a shared database pool. It is not intended to be a general-purpose reusable library.
+sqlbinder is a Rust library and sample executable for configuration-driven database access. The implementation loads settings, creates backend pools, executes SQL, normalizes result sets, and can format rows as JSON. It does not include an HTTP API layer, external query-definition runtime, or protobuf support.
 
-## Service Requirement
+## Goals
 
-The system shall expose REST endpoints and execute database queries in response to incoming HTTP requests.
+- support PostgreSQL and SQLite backends
+- keep connection lifecycle isolated from query execution
+- normalize query outputs across database engines
+- serialize query results into a simple JSON-friendly envelope
+- validate settings and secrets before creating a pool
 
-At startup, the service shall:
+## Non-goals
 
-1. Load application configuration.
-2. Load query definitions from configured files.
-3. Load request and response mapping definitions.
-4. Create and maintain one shared database pool for the selected backend.
+The repository does not currently provide:
 
-For each REST request, the service shall:
+- a REST service
+- request routing or operation resolution
+- SQL file loading or external query definitions
+- response mapping layers beyond basic result formatting
+- generated protobuf or API schemas
 
-1. Resolve the route or operation.
-2. Resolve the configured SQL query from the loaded query definitions.
-3. Map incoming request data to query inputs.
-4. Acquire a short-lived database connection from the shared pool.
-5. Execute the SQL query.
-6. Map the result set to the configured response shape.
-7. Return the response to the caller.
+## Current runtime model
 
-## Database Design Requirement
+The library workflow is:
 
-The database layer shall be optimized for pooled connections only. Single persistent connection support is intentionally excluded because it does not match the request-driven execution model of the service.
+1. `ContextContainer::new()` loads `settings.toml` from the crate root and merges `settings.<environment>.toml` when that file exists.
+2. The caller reads the configured `DatabaseSettings` and passes them to `get_connection_pool()`, which validates settings and constructs a PostgreSQL or SQLite pool.
+3. The caller may store the pool in the context, whose pool slot can be initialized once, or pass the pool to `create_query_executor()`.
+4. `QueryExecutor` executes SQL and returns normalized `QueryRows` for reads or an affected-row count for writes.
+5. `query_result_formatter` can convert read rows to a JSON `count`/`items` envelope.
 
-The required split is:
+The sample executable follows the settings, pool, and context steps, then prints the environment name. It does not run SQL or serve requests.
 
-1. `DatabasePool`: long-lived application state shared by the process.
-2. `DatabaseConnection`: short-lived connection acquired per request.
-3. `ExecutionContext`: optional per-request execution wrapper for transactions, logging, metrics, and metadata.
+## Key components
 
-This separation keeps connection resolution independent from query execution while allowing future execution logic to add transactions, result mapping, logging, and metrics without coupling them to connection lifecycle management.
+### `ContextContainer`
 
-## Connection Layer Requirement
+`ContextContainer` owns application settings and exposes the active environment and database configuration. It has a shared pool slot that callers can initialize once; constructing the context does not create a pool.
 
-The database connection module shall be limited to connection-related responsibilities only. It shall:
+### `AppSettings` and `DatabaseSettings`
 
-1. Build backend-specific pools from configuration.
-2. Hold long-lived backend pool instances.
-3. Acquire short-lived backend connections.
-4. Expose a unified acquired connection type.
+Settings are parsed into typed configuration structs. The current supported variants are:
 
-It shall not execute queries, resolve route logic, or contain result-mapping behavior.
+- `DatabaseSettings::Postgres(PostgresSettings)`
+- `DatabaseSettings::Sqlite(SqliteSettings)`
+- `DatabaseSettings::SQLiteInMemory(SqliteInMemorySettings)`
 
-## Runtime Expectations
+The validator enforces required backend fields, positive connection limits and timeouts, and PostgreSQL password-file requirements. Settings are read from the crate root, independent of the launch directory. A relative password-file path is opened relative to the process working directory.
 
-The service shall run as a deployable application in a Docker-style environment where settings, SQL queries, and mappings are provided externally at runtime.
+### `DbConnectionPool`
 
-The expected runtime shape is:
+The connection layer resolves the configured backend and returns a unified pool enum. The actual connection types are kept backend-specific under `src/db/pg/` and `src/db/sqlite/`, while the public API presents a single dispatch point.
 
-- configuration loaded at process start
-- shared DB pool created once and reused for the lifetime of the process
-- request-driven execution flow for each REST call
-- stateless query execution model built on pooled connections
+### `QueryExecutor`
 
-## Repository Direction
+`QueryExecutor` accepts a pooled database backend and exposes:
 
-The repository should evolve toward this architecture by keeping:
+- `execute_write()` for DML/DDL statements that return affected rows
+- `execute_read()` for SELECT-style queries that return `QueryRows`
 
-1. Application settings loading and validation under `src/context_container/app_settings/`.
-2. Database backend modules for PostgreSQL and SQLite under `src/db/`.
-3. Pooled connection abstractions and factory resolution under `src/db/`.
-4. Docker-friendly test resources under `test-utils/` and `unit-test-resources/`.
+The result model is backend-neutral and uses `DbValue` for row values.
 
-The target design is a pooled-only service architecture aligned to the requirement above.
+### `query_result_formatter`
 
-## Current Status
+The formatter converts `QueryRows` into a JSON object with a row count and items keyed by column name:
 
-The repository currently contains the database, configuration, query execution, and result formatting foundations for the target service:
+```json
+{"count":1,"items":[{"id":1,"name":"alice"}]}
+```
 
-- Application settings are loaded from `settings.toml` through `src/context_container/app_settings/`.
-- Settings are parsed into typed application and database models, including PostgreSQL, file-backed SQLite, and SQLite in-memory modes.
-- Database settings validation covers required fields, connection limits, timeouts, PostgreSQL SSL mode, password-file requirements, and SQLite path rules.
-- Database passwords are loaded from configured secret files instead of being stored directly in the typed settings.
-- `ContextContainer` owns application settings and can store a shared `DbConnectionPool`.
-- `get_connection_pool()` resolves the configured backend and creates a lazy, shared PostgreSQL or SQLite pool.
-- Backend pool creation is isolated under `src/db/pg/` and `src/db/sqlite/`.
-- The executable entry point loads settings, initializes the configured lazy pool, stores it in `ContextContainer`, and reports the active environment.
-- `QueryExecutor` executes read and write SQL against either supported backend.
-- Query rows are converted into backend-independent column and `DbValue` structures.
-- Query results can be converted into a JSON-compatible envelope containing `count` and `items`.
-- Unit tests cover settings parsing and validation, secret loading, pool factory dispatch, SQLite path validation, query execution, row mapping, and result formatting.
+`count` is the number of rows. Values retain their JSON scalar form; byte values serialize as integer arrays. This is a generic formatter output, not a versioned service contract.
 
-The next implementation scope is the request-facing service layer: REST endpoints, external query and mapping definitions, route and operation resolution, request-to-query input mapping, response mapping, and explicit per-request connection and execution context handling. The existing startup path currently initializes configuration and the shared lazy database pool; end-to-end request execution will build on that foundation.
+## Data flow
+
+The effective data flow when a caller executes a read is:
+
+1. read TOML settings
+2. validate backend configuration
+3. resolve password file for PostgreSQL when needed
+4. create a backend pool
+5. optionally store the pool in the shared context
+6. build a `QueryExecutor` from the pool
+7. run SQL and return `QueryRows` containing column names and typed values
+8. optionally serialize rows to the JSON envelope
+
+## Current status
+
+The repository currently implements configuration, pooling, query execution, and JSON row formatting. The protobuf design in [the feature reference](features/query-to-protobuf-feature-reference.md) is planned work, not an implemented runtime path.

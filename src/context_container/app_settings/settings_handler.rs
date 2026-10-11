@@ -118,6 +118,7 @@ mod tests {
 
 	fn fixture_path(relative: &str) -> PathBuf {
 		PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+			.join("tests")
 			.join("test-utils")
 			.join("unit-test-resources")
 			.join(relative)
@@ -147,7 +148,7 @@ mod tests {
 		port = 5432
 		user = "appuser"
 		name = "appdb"
-		password_file = "test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
+		password_file = "tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
 		max_connections = 10
 		connect_timeout_secs = 5
 		ssl_mode = "disable"
@@ -167,6 +168,7 @@ mod tests {
 	#[test]
 	fn valid_settings_file_parsing_success() {
 		let settings_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+			.join("tests")
 			.join("test-utils")
 			.join("unit-test-resources")
 			.join("settings")
@@ -191,7 +193,7 @@ mod tests {
 
 	#[test]
 	fn missing_environment_defaults_to_local_success() {
-		let settings_file = settings_file_path("test-utils/unit-test-resources/settings/base_without_environment.toml");
+		let settings_file = settings_file_path("tests/test-utils/unit-test-resources/settings/base_without_environment.toml");
 
 		let settings = with_restored_cwd(|| AppSettings::from_file(&settings_file))
 			.expect("expected valid settings fixture");
@@ -237,6 +239,7 @@ mod tests {
 	#[test]
 	fn invalid_toml_settings_file_failure() {
 		let settings_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+			.join("tests")
 			.join("test-utils")
 			.join("unit-test-resources")
 			.join("settings")
@@ -256,19 +259,19 @@ mod tests {
 		let base_backup = fs::read_to_string(&base_path).ok();
 		let overlay_backup = fs::read_to_string(&overlay_path).ok();
 
-		let base_fixture = settings_file_path("test-utils/unit-test-resources/settings/default_base.toml");
-		let env_fixture = settings_file_path("test-utils/unit-test-resources/settings/default_development_override.toml");
+		let base_fixture = settings_file_path("tests/test-utils/unit-test-resources/settings/default_base.toml");
+		let env_fixture = settings_file_path("tests/test-utils/unit-test-resources/settings/default_development_override.toml");
 		let base_content = fs::read_to_string(&base_fixture).expect("base fixture should be readable");
 		let env_content = fs::read_to_string(&env_fixture).expect("env fixture should be readable");
-		let password_file = settings_file_path("test-utils/unit-test-resources/secrets/db_password_with_newline.txt")
+		let password_file = settings_file_path("tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt")
 			.to_string_lossy()
 			.replace('\\', "\\\\");
 		let base_content = base_content.replace(
-			"test-utils/unit-test-resources/secrets/db_password_with_newline.txt",
+			"tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt",
 			&password_file,
 		);
 		let env_content = env_content.replace(
-			"test-utils/unit-test-resources/secrets/db_password_with_newline.txt",
+			"tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt",
 			&password_file,
 		);
 
@@ -315,7 +318,7 @@ mod tests {
 			port = 5432
 			user = "appuser"
 			name = "appdb"
-			password_file = "test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
+			password_file = "tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
 			max_connections = 10
 			connect_timeout_secs = 5
 			ssl_mode = "disable"

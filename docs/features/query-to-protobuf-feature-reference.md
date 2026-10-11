@@ -1,14 +1,16 @@
-# Query-to-Protobuf Feature Reference
+# Query-to-Protobuf Design Proposal
 
 ![Status: Planned](https://img.shields.io/badge/status-planned-blue)
 
 ## Summary
 
-This feature adds protobuf compatibility to the existing JSON-based runtime without requiring a service layer yet. The design treats SQL query definitions as the source contract for generated message schemas, while the runtime uses typed `QueryRows` as the internal contract boundary before serializing to either JSON or protobuf output.
+This document proposes protobuf support alongside the existing JSON formatter. It describes a possible design; protobuf generation, SQL contract loading, validation, mapping, and serialization are not implemented.
 
-The project already has a JSON-style envelope as a generic transport format. That remains useful for compatibility and debugging, but it is not the canonical source for strongly typed protobuf contracts. Protobuf responses should be generated from typed message definitions, not reconstructed from a lossy JSON envelope.
+The current query API accepts raw SQL strings and returns `QueryRows`, which contains column names and runtime values. It does not retain database type or nullability metadata, support bind parameters, parse SQL definitions, or generate message types. An implementation must resolve these limits before treating query output as a stable typed contract.
 
-This is a message-first design, not an RPC-service-first design. There are no service definitions in scope yet; only generated message contracts and response serialization behavior.
+The project has a JSON-style envelope as a generic formatter output. A future protobuf implementation could use generated message definitions rather than reconstructing typed messages from that envelope.
+
+This proposal is message-first rather than RPC-service-first. Service definitions are out of scope; generated message contracts and response serialization are also future work.
 
 ## Core design
 
@@ -33,7 +35,7 @@ The project should maintain a predefined type matrix such as:
 - `BLOB` -> `Vec<u8>` -> `bytes`
 - nullable values must be represented as optional or nullable proto fields
 
-This is the default mapping source of truth.
+This is an illustrative mapping only, not a supported mapping table. Exact mappings, database-specific types, integer ranges, nullability, and protobuf presence semantics need to be specified and tested before implementation.
 
 ### 2. JSON remains a compatibility transport, not the proto contract
 
@@ -43,7 +45,7 @@ The current JSON envelope is a neutral, schema-agnostic payload:
 - `items[]`
 - per-row key/value map of column name to scalar-like value
 
-This remains useful for generic exchange, debug output, and compatibility with older clients.
+This may remain useful for generic exchange and debugging. The current formatter serializes byte values as JSON integer arrays; other transport encodings would require explicit compatibility decisions.
 
 However, it is intentionally not the canonical protobuf contract. The protobuf path should instead produce typed messages, optionally wrapped in a typed response envelope that matches the generated proto schema.
 
@@ -63,7 +65,7 @@ For message generation and row mapping, the preferred source is the actual query
 - mapping logic is explicit and predictable
 - conversion rules are fixed instead of ad hoc
 
-This is the better base for:
+`QueryRows` may be a starting point for:
 
 - repeated message generation
 - typed protobuf serialization
@@ -79,7 +81,7 @@ The project should enforce this rule:
 - one query generates one main contract
 - one file should not hide multiple query shapes
 
-This keeps generated messages and runtime behavior easy to reason about.
+This is a proposed convention, not a current repository constraint. The repository does not currently load `.sql` files or associate files with query contracts.
 
 For multi-query or procedure-driven flows, the system may redirect to stored procedures or dedicated query entry points, but those should still be explicit contracts rather than implicit mixed results.
 
@@ -110,7 +112,7 @@ message User {
 }
 ```
 
-This should be the default behavior.
+This could be a default convention if generation and mapping are implemented.
 
 ### 6. Manual mapping is a fallback, not the default
 
@@ -178,7 +180,7 @@ The tool should:
 4. generate the `.proto` file and mapping metadata
 5. invoke `buf` or `protoc` to generate the Rust model types
 
-This is a generation step, not runtime execution logic.
+This would be a generation step, not runtime execution logic. No generator or protobuf tooling is currently configured in the repository.
 
 ### 10. Read queries generate response messages
 
@@ -234,9 +236,9 @@ The system is primarily designed around typed CRUD operations in protobuf form:
 - update request
 - delete request/response as needed
 
-This keeps the generated proto contract aligned with actual database operations and message semantics.
+This is a proposed way to align generated proto contracts with database operations and message semantics.
 
-The system does not define an RPC/service layer yet; it defines the message contract and response serialization behavior first.
+The repository does not currently define message contracts or response serialization behavior for protobuf.
 
 ### 13. Response envelope may exist, but it is typed per proto contract
 
@@ -276,14 +278,14 @@ The exact naming convention should be fixed and enforced so users do not need to
 
 ### 15. Formatter receives a format type and returns the serialized payload
 
-The formatter layer decides how the validated message is emitted:
+In a future implementation, the formatter layer could decide how a validated message is emitted:
 
 - JSON output -> string
 - protobuf output -> bytes
 
 This allows the runtime to keep one internal message-building path while supporting multiple transport encodings.
 
-Example contract:
+Illustrative pseudocode only; `ResponseFormat`, `ResponsePayload`, `Error`, and `SerializeOrProto` are not defined by this repository:
 
 ```rust
 enum ResponseFormat {
@@ -312,11 +314,11 @@ At this stage, the project is not yet defining a gRPC or RPC service layer. The 
 - runtime builds message instances
 - formatter serializes the message to JSON or protobuf bytes
 
-This keeps the scope small and aligned with the current repository, which already centers around `QueryRows` and formatter-level output shaping.
+This proposal is independent of an RPC service. The current repository provides `QueryRows` and JSON formatting only; it does not build generated messages or serialize protobuf bytes.
 
 ## External mapping file
 
-The external file is used to define the relationship between:
+If an external mapping file is adopted, it could define the relationship between:
 
 - query identity
 - generated message name
@@ -335,7 +337,7 @@ The file should define metadata such as:
 - required or optional status
 - conversion rules when needed
 
-This file is the contract registry, not the source of truth for the actual query logic. The source of truth remains the SQL definition, database schema, and validation metadata.
+Such a file would be mapping metadata, not the source of truth for query logic. The proposal treats SQL definitions, database schema, and validation metadata as inputs; their precedence and ownership still need to be specified.
 
 ## Migration and schema management
 
@@ -389,8 +391,8 @@ This reduces manual work without losing contract correctness.
 
 ## Design conclusion
 
-The strongest approach is to map directly from typed `QueryRows` into generated message models using a predefined DB-to-Rust-to-Proto conversion table. The JSON envelope remains useful as a generic transport format, while protobuf responses use typed, message-specific definitions generated from the SQL contract.
+The proposal's preferred direction is to map query results into generated message models using an explicit DB-to-Rust-to-protobuf conversion table. `QueryRows` alone does not contain database schema metadata or nullability, so the design must define where that information comes from and how it is checked. The existing JSON envelope remains a separate generic formatter output.
 
-The runtime does not need a service layer to begin with. A message-first design is sufficient for this repository: build the query contract, generate the message schema, validate the result, map to the generated message, and serialize using either JSON or protobuf depending on the requested format.
+The proposal does not require a service layer. Implementing it would still require query-contract discovery, message generation, schema/type validation, row mapping, and a serialization API, none of which exists yet.
 
-For write operations, generate the request message from bind parameters; for return-bearing writes, generate the response message from the `RETURNING` columns. This aligns the query contract with actual database behavior and keeps the workflow simple, predictable, and schema-driven.
+The proposal would generate write request messages from bind parameters and response messages from `RETURNING` columns. This depends on defining a bind-parameter model and backend-specific type rules.

@@ -13,3 +13,11 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls", "postgres",
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+
+[[test]]
+name = "sqlite"
+path = "tests/db-integration/sqlite/main.rs"
+
+[[test]]
+name = "postgres"
+path = "tests/db-integration/postgres/main.rs"
