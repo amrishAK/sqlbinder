@@ -4,7 +4,7 @@
 
 ## Summary
 
-This document proposes protobuf support alongside the existing JSON formatter. It describes a possible design; protobuf generation, SQL contract loading, validation, mapping, and serialization are not implemented.
+This document proposes protobuf support alongside the existing JSON formatter. It describes a possible design; protobuf generation, schema/type validation, message mapping, and protobuf serialization are not implemented. SQL file preparation and structural validation are implemented separately under the [SQL query contract feature](sql-query-contract-feature-reference.md).
 
 The current query API accepts raw SQL strings and returns `QueryRows`, which contains column names and runtime values. It does not retain database type or nullability metadata, support bind parameters, parse SQL definitions, or generate message types. An implementation must resolve these limits before treating query output as a stable typed contract.
 
@@ -81,7 +81,7 @@ The project should enforce this rule:
 - one query generates one main contract
 - one file should not hide multiple query shapes
 
-This is a proposed convention, not a current repository constraint. The repository does not currently load `.sql` files or associate files with query contracts.
+The query handler now loads `.sql` files and enforces one supported statement per file under the [SQL query contract feature](sql-query-contract-feature-reference.md). Associating these contracts with generated protobuf messages remains proposed work.
 
 For multi-query or procedure-driven flows, the system may redirect to stored procedures or dedicated query entry points, but those should still be explicit contracts rather than implicit mixed results.
 

@@ -14,6 +14,7 @@ This directory contains:
 - `postgres/docker-compose.yaml`: local PostgreSQL + one-shot seed service.
 - `postgres/seed.sql`: schema, indexes, and seed rows.
 - `sqlite/seed.sql`: SQLite-compatible schema, indexes, and equivalent seed rows.
+- `queries/`: parameterized SQL query fixtures shared by tests.
 - `unit-test-resources/settings/`: TOML fixtures for settings parsing, defaults, validation, and merge tests.
 - `unit-test-resources/secrets/`: secret-file fixtures for password file loading tests.
 
@@ -104,6 +105,13 @@ Database setup for integration tests is implemented in
 `tests/db-integration/support/database.rs`; seed SQL belongs here under the
 matching backend directory. Settings are loaded from the crate root, but
 relative password-file paths resolve from the process working directory.
+
+The valid `queries/` fixtures use named `$name` inputs and explicit `AS` output
+aliases, targeting tables created by both backend seed scripts.
+`invalid_output.sql` intentionally omits an output alias to test contract
+rejection before input-value validation. The query handler translates canonical
+inputs to backend placeholders and returns ordered values; the current
+`QueryExecutor` API does not bind these parameters.
 
 ## Scope and constraints
 

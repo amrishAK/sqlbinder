@@ -7,6 +7,7 @@ sqlbinder is a Rust crate for loading application configuration, creating backen
 - loads app settings from a TOML file
 - validates database configuration and secret-file inputs
 - creates a pooled connection manager for PostgreSQL or SQLite
+- loads SQL files, validates explicit input/output contracts, and prepares bound queries
 - executes raw SQL through a backend-neutral `QueryExecutor`
 - normalizes database rows into `DbValue` and `QueryRows`
 - serializes results to a JSON-style `count`/`items` envelope
@@ -17,8 +18,10 @@ The core runtime is organized around a small set of primitives:
 
 - `ContextContainer` loads settings and can hold a shared pool for the process
 - `DatabaseSettings` models the configured backend and connection parameters
+- `QuerySettings` requires the directory containing SQL query files
 - `get_connection_pool()` validates settings and selects the pool factory for the active backend
 - `QueryExecutor` runs SQL against the selected pool and returns `QueryRows`
+- `prepare_query()` validates a SQL file and returns backend SQL with ordered parameters
 - `query_result_formatter` converts result rows into a JSON-compatible envelope
 
 The executable currently loads settings, creates and stores a pool, then prints the environment name. It does not start a request-handling service.
@@ -47,7 +50,14 @@ password_file = "tests/test-utils/unit-test-resources/secrets/db_password_with_n
 max_connections = 10
 connect_timeout_secs = 5
 ssl_mode = "disable"
+
+[queries]
+directory = "tests/test-utils/queries"
 ```
+
+`queries.directory` is required and points to the directory reserved for SQL
+query files. The current `QueryExecutor` still accepts raw SQL strings and does
+not load files from this directory.
 
 Supported backends:
 
@@ -102,7 +112,7 @@ To run the PostgreSQL query tests after starting the fixture stack, use the comm
 
 ## Status
 
-The project currently covers configuration loading, pooled database access, SQL execution, row normalization, and JSON result formatting. Protobuf generation, external SQL definition loading, and request/response mapping are not implemented; the [protobuf feature reference](docs/features/query-to-protobuf-feature-reference.md) is a proposal.
+The project currently covers configuration loading, pooled database access, SQL execution, row normalization, and JSON result formatting. The query handler implements the [SQL query contract](docs/features/sql-query-contract-feature-reference.md), but executor integration for bound parameters is deferred. Protobuf generation and request/response mapping are not implemented; the [protobuf feature reference](docs/features/query-to-protobuf-feature-reference.md) is a proposal.
 
 ## Further documentation
 

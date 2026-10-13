@@ -11,4 +11,7 @@
         max_connections = 10
         connect_timeout_secs = 5
         ssl_mode = "disable"
+
+        [queries]
+        directory = "tests/test-utils/queries"
         

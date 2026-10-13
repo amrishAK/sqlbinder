@@ -52,13 +52,14 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use super::super::app_settings::{DatabaseSettings, PostgresSettings};
+    use super::super::app_settings::{DatabaseSettings, PostgresSettings, QuerySettings};
     use super::*;
     use crate::context_container::shared_cwd_test_lock;
 
     fn test_app_settings(environment: &str) -> AppSettings {
         AppSettings {
             environment: environment.to_owned(),
+            queries: QuerySettings { directory: "tests/test-utils/queries".to_owned() },
             database: DatabaseSettings::Postgres(PostgresSettings {
                 host: "localhost".to_owned(),
                 port: 5432,
@@ -122,6 +123,9 @@ mod tests {
         max_connections = 10
         connect_timeout_secs = 5
         ssl_mode = "disable"
+
+        [queries]
+        directory = "tests/test-utils/queries"
         "#;
 
         fs::write(&settings_path, settings_contents).expect("settings file should be written");

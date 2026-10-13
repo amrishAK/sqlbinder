@@ -21,6 +21,7 @@ pub use model::{
 	DatabaseSettings,
 	DbType,
 	PostgresSettings,
+	QuerySettings,
 	SqliteInMemorySettings,
 	SqliteSettings,
 	DEFAULT_SETTINGS_FILE,

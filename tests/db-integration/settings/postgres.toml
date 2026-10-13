@@ -10,3 +10,6 @@ password_file = "tests/db-integration/settings/postgres_password.txt"
 max_connections = 5
 connect_timeout_secs = 5
 ssl_mode = "disable"
+
+[queries]
+directory = "tests/test-utils/queries"

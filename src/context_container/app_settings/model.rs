@@ -16,6 +16,13 @@ pub enum DbType {
 pub struct AppSettings {
 	pub environment: String,
 	pub database: DatabaseSettings,
+	pub queries: QuerySettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Settings for locating SQL query files.
+pub struct QuerySettings {
+	pub directory: String,
 }
 
 #[derive(Debug, Clone)]

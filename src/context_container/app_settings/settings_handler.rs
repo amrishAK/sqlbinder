@@ -9,6 +9,7 @@ use super::error::AppSettingsError;
 use super::model::{
 	AppSettings,
 	DatabaseSettings,
+	QuerySettings,
 };
 use super::model::DbType;
 
@@ -35,8 +36,25 @@ impl AppSettings {
 			.ok_or_else(|| AppSettingsError::InvalidConfig("database table is required".to_owned()))?;
 
 		let database = DatabaseSettings::from_toml_table(database_table, database_type)?;
-		let settings = Self { environment, database };
+		let queries = Self::parse_query_settings(raw.get("queries"))?;
+		let settings = Self { environment, database, queries };
 		Ok(settings)
+	}
+
+	fn parse_query_settings(value: Option<&toml::Value>) -> Result<QuerySettings, AppSettingsError> {
+		let table = value.and_then(toml::Value::as_table).ok_or_else(|| {
+			AppSettingsError::InvalidConfig("queries table is required".to_owned())
+		})?;
+		let directory = table
+			.get("directory")
+			.and_then(toml::Value::as_str)
+			.filter(|directory| !directory.trim().is_empty())
+			.ok_or_else(|| AppSettingsError::InvalidConfig(
+				"queries.directory is required and must be a non-empty string".to_owned(),
+			))?
+			.to_owned();
+
+		Ok(QuerySettings { directory })
 	}
 
 	fn validate_and_get_environment(raw: &toml::Value) -> Result<String, AppSettingsError> {
@@ -152,6 +170,9 @@ mod tests {
 		max_connections = 10
 		connect_timeout_secs = 5
 		ssl_mode = "disable"
+
+		[queries]
+		directory = "tests/test-utils/queries"
 		"#,
 		)
 		.expect("raw toml should parse");
@@ -160,6 +181,7 @@ mod tests {
 		let database = settings.database.postgres().expect("expected postgres settings");
 
 		assert_eq!(settings.environment, "development");
+		assert_eq!(settings.queries.directory, "tests/test-utils/queries");
 		assert_eq!(database.host, "localhost");
 		assert_eq!(database.port, 5432);
 		assert_eq!(database.user, "appuser");
@@ -182,6 +204,7 @@ mod tests {
 			.expect("expected postgres settings");
 
 		assert_eq!(settings.environment, "development");
+		assert_eq!(settings.queries.directory, "tests/test-utils/queries");
 		assert_eq!(database.host, "localhost");
 		assert_eq!(database.port, 5432);
 		assert_eq!(database.user, "appuser");
@@ -211,6 +234,9 @@ mod tests {
 		[database]
 		max_connections = 10
 		connect_timeout_secs = 5
+
+		[queries]
+		directory = "tests/test-utils/queries"
 		"#,
 		)
 		.expect("raw toml should parse");
@@ -227,6 +253,9 @@ mod tests {
 		[database]
 		max_connections = 10
 		connect_timeout_secs = 5
+
+		[queries]
+		directory = "tests/test-utils/queries"
 		"#,
 		)
 		.expect("raw toml should parse");
@@ -322,6 +351,9 @@ mod tests {
 			max_connections = 10
 			connect_timeout_secs = 5
 			ssl_mode = "disable"
+
+			[queries]
+			directory = "tests/test-utils/queries"
 			"#,
 		)
 		.expect("raw toml should parse");
@@ -331,6 +363,42 @@ mod tests {
 
 		assert_eq!(settings.environment, "local");
 		assert_eq!(database.user, "appuser");
+		assert_eq!(settings.queries.directory, "tests/test-utils/queries");
+	}
+
+	#[test]
+	fn missing_query_settings_failure() {
+		let result = AppSettings::parse_query_settings(None);
+
+		assert!(matches!(result, Err(AppSettingsError::InvalidConfig(message)) if message.contains("queries table is required")));
+	}
+
+	#[test]
+	fn query_directory_override_parses_success() {
+		let raw = toml::from_str::<toml::Value>(
+			r#"
+			environment = "development"
+			database_type = "postgres"
+
+			[database]
+			host = "localhost"
+			port = 5432
+			user = "appuser"
+			name = "appdb"
+			password_file = "tests/test-utils/unit-test-resources/secrets/db_password_with_newline.txt"
+			max_connections = 10
+			connect_timeout_secs = 5
+			ssl_mode = "disable"
+
+			[queries]
+			directory = "custom/queries"
+			"#,
+		)
+		.expect("raw toml should parse");
+
+		let settings = AppSettings::from_toml_value(raw).expect("query directory should parse");
+
+		assert_eq!(settings.queries.directory, "custom/queries");
 	}
 
 	#[test]
@@ -360,6 +428,7 @@ mod tests {
 		let password_file = fixture_path("secrets/db_password_with_newline.txt");
 		let settings = AppSettings {
 			environment: "development".to_owned(),
+			queries: QuerySettings { directory: "tests/test-utils/queries".to_owned() },
 			database: DatabaseSettings::Postgres(PostgresSettings {
 				host: "localhost".to_owned(),
 				port: 5432,
@@ -381,6 +450,7 @@ mod tests {
 	fn missing_database_password_source_failure() {
 		let settings = AppSettings {
 			environment: "development".to_owned(),
+			queries: QuerySettings { directory: "tests/test-utils/queries".to_owned() },
 			database: DatabaseSettings::Postgres(PostgresSettings {
 				host: "localhost".to_owned(),
 				port: 5432,

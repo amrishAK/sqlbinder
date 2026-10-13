@@ -16,7 +16,7 @@ The repository does not currently provide:
 
 - a REST service
 - request routing or operation resolution
-- SQL file loading or external query definitions
+- an integrated external query-definition execution runtime
 - response mapping layers beyond basic result formatting
 - generated protobuf or API schemas
 
@@ -38,9 +38,12 @@ The sample executable follows the settings, pool, and context steps, then prints
 
 `ContextContainer` owns application settings and exposes the active environment and database configuration. It has a shared pool slot that callers can initialize once; constructing the context does not create a pool.
 
-### `AppSettings` and `DatabaseSettings`
+### `AppSettings`, `DatabaseSettings`, and `QuerySettings`
 
-Settings are parsed into typed configuration structs. The current supported variants are:
+Settings are parsed into typed configuration structs. `AppSettings` includes
+database settings and a required `queries.directory` path. The query directory
+is configured but is not currently loaded by the runtime. The supported
+database variants are:
 
 - `DatabaseSettings::Postgres(PostgresSettings)`
 - `DatabaseSettings::Sqlite(SqliteSettings)`
@@ -60,6 +63,15 @@ The connection layer resolves the configured backend and returns a unified pool 
 - `execute_read()` for SELECT-style queries that return `QueryRows`
 
 The result model is backend-neutral and uses `DbValue` for row values.
+
+### Query handler
+
+`prepare_query()` loads a SQL file, validates named input parameters, and returns
+backend-specific SQL with an ordered parameter vector in `BoundQuery`. The
+executor does not yet consume this bound query. The handler validates statement
+structure, input names, explicit output aliases, and wildcard restrictions;
+the [SQL query contract feature](features/sql-query-contract-feature-reference.md)
+records the rules and validation scope.
 
 ### `query_result_formatter`
 
