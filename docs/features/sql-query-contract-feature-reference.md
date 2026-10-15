@@ -1,18 +1,36 @@
 # SQL Query Contract Feature
 
-## Status and purpose
+![Status: Partially implemented](https://img.shields.io/badge/status-partially%20implemented-yellow)
 
-Status: query preparation and contract validation implemented; executor
-integration is deferred.
+## Summary
 
 User-defined SQL files should expose explicit inputs and outputs rather than
 depend on backend-specific parameter syntax or implicit result column names.
 This contract supports predictable query preparation and later result mapping.
 It does not require protobuf support.
 
+Query preparation and contract validation are implemented; executor
+integration is deferred.
+
+## Scope
+
+In scope:
+
+- canonical `$name` input placeholders in query files
+- explicit, unique output aliases for the final result
+- the naming grammar for inputs and output aliases
+- the supported statement set for a single query file
+- preparation that returns backend SQL and an ordered parameter vector
+
+Out of scope for this document:
+
+- binding and running a prepared query, covered by the [query executor feature](query-executor-feature-reference.md)
+- classification, type resolution, and nullability, covered by the [query manifest proposal](query-manifest-feature-reference.md)
+- protobuf messages, covered by the [query-to-protobuf proposal](query-to-protobuf-feature-reference.md)
+
 ## Agreed requirements
 
-### Inputs use `$name`
+### 1. Inputs use `$name`
 
 Every input placeholder must have a `$` prefix, for example `$user_id` or
 `$dataset_name`. This is sqlbinder's query-file convention for both PostgreSQL
@@ -33,7 +51,7 @@ Placeholder-like text in strings, quoted identifiers, dollar-quoted strings,
 and comments is not an input. A `$` inside an SQL identifier is not automatically
 a placeholder.
 
-### Outputs are explicit
+### 2. Outputs are explicit
 
 Every column or expression exposed by the final `SELECT` result must use
 `AS output_name` to declare its result name. Outputs are aliases, not `$`
@@ -52,7 +70,7 @@ also applies inside CTEs and subqueries.
 output projection. Multiplication is also allowed, for example
 `price * quantity AS total_price`.
 
-### Names follow one grammar
+### 3. Names follow one grammar
 
 Input names and final output aliases must match `[a-z][a-z0-9_]*`: start with a
 lowercase ASCII letter, followed by lowercase letters, digits, or underscores.
@@ -63,7 +81,7 @@ Quoted output aliases, uppercase letters, leading underscores, and non-ASCII
 characters in contract names are rejected initially. This restriction does not
 apply to database object identifiers or dollar-quote tags.
 
-### One file contains one supported statement
+### 4. One file contains one supported statement
 
 Each SQL file contains exactly one SQL statement. An optional trailing semicolon
 and surrounding comments are allowed; semicolons inside literals or comments
@@ -82,7 +100,7 @@ no-wildcard rules as the final `SELECT` projection.
 CTEs and subqueries. Validation must return an explicit unsupported-query error.
 Supporting them later requires defined output-shape validation.
 
-### Preparation returns a bound query
+### 5. Preparation returns a bound query
 
 The query handler loads a SQL file, validates its contract and supplied inputs,
 and returns backend SQL plus an ordered parameter vector.
@@ -176,9 +194,11 @@ casts, and other backend syntax without interpreting their contents as inputs
 or output projections. Output checks must understand projection structure;
 a text search for `*` or `AS` is not sufficient.
 
-## Related feature
+## Related features
 
-The [query-to-protobuf proposal](query-to-protobuf-feature-reference.md) describes
-future typed message generation and mapping. This SQL contract defines input
+The [query manifest proposal](query-manifest-feature-reference.md) builds on
+this contract: it records every validated query with its classification,
+types, and nullability. The [query-to-protobuf proposal](query-to-protobuf-feature-reference.md)
+generates typed messages from that manifest. This SQL contract defines input
 and output naming independently; types, nullability, schema inspection, and
 protobuf generation remain outside this feature's current scope.

@@ -4,395 +4,175 @@
 
 ## Summary
 
-This document proposes protobuf support alongside the existing JSON formatter. It describes a possible design; protobuf generation, schema/type validation, message mapping, and protobuf serialization are not implemented. SQL file preparation and structural validation are implemented separately under the [SQL query contract feature](sql-query-contract-feature-reference.md).
+This document proposes generating protobuf message definitions from the
+[query manifest](query-manifest-feature-reference.md). Each manifest entry
+produces an input and response message, plus an output message only for
+row-producing operations. Nothing in this document is implemented.
 
-The current query API accepts raw SQL strings and returns `QueryRows`, which contains column names and runtime values. It does not retain database type or nullability metadata, support bind parameters, parse SQL definitions, or generate message types. An implementation must resolve these limits before treating query output as a stable typed contract.
+The proposed manifest would hold each query's resolved types, nullability, and
+stable field numbers. The proposed protobuf generator would read only that
+metadata; it would not re-read SQL files or inspect the database schema.
 
-The project has a JSON-style envelope as a generic formatter output. A future protobuf implementation could use generated message definitions rather than reconstructing typed messages from that envelope.
+## Scope
 
-This proposal is message-first rather than RPC-service-first. Service definitions are out of scope; generated message contracts and response serialization are also future work.
+In scope:
 
-## Core design
+- deriving input, output, and response messages from a manifest entry
+- mapping manifest types and nullability to protobuf field types
+- naming messages
+- validating generated messages against the manifest
 
-### 1. Canonical flow is DB -> Rust -> Message -> Output format
+Out of scope for this document:
 
-The runtime should define a fixed conversion pipeline:
+- discovering SQL, classification, type resolution, and field-number
+  assignment, covered by the [query manifest proposal](query-manifest-feature-reference.md)
+- SQL validation rules, covered by the [SQL query contract](sql-query-contract-feature-reference.md)
+- Rust code generation, transports, authentication, and runtime use, covered
+  at a high level in the [project overview](../project_overview.md#two-usage-modes)
 
-- DB schema defines column types and nullability
-- query result is represented as typed `QueryRows` in Rust
-- Rust values are validated against a known DB-to-Rust mapping
-- generated message types are populated from the validated values
-- a formatter converts the message into either JSON or protobuf bytes
+## Message model
 
-This pipeline is the contract boundary. It must be deterministic and versioned.
+### 1. One manifest entry = one set of messages
 
-The project should maintain a predefined type matrix such as:
+Each query entry in the proposed manifest produces one input and one response
+message. Row-producing operations also produce one output message; writes
+without `RETURNING` do not. All generated messages go into one protobuf package.
 
-- `INTEGER` / `BIGINT` -> `i64` -> `int64`
-- `TEXT` / `VARCHAR` -> `String` -> `string`
-- `BOOLEAN` -> `bool` -> `bool`
-- `REAL` / `DOUBLE` -> `f64` -> `double`
-- `BLOB` -> `Vec<u8>` -> `bytes`
-- nullable values must be represented as optional or nullable proto fields
+### 2. Message sources
 
-This is an illustrative mapping only, not a supported mapping table. Exact mappings, database-specific types, integer ranges, nullability, and protobuf presence semantics need to be specified and tested before implementation.
+| Message | Source in the manifest entry |
+|---|---|
+| Input | `inputs` |
+| Output | `outputs`, describing one result row |
+| Response | `result`: a repeated list of output rows for `rows`, or an affected-row count for `affected_rows` |
 
-### 2. JSON remains a compatibility transport, not the proto contract
-
-The current JSON envelope is a neutral, schema-agnostic payload:
-
-- `count`
-- `items[]`
-- per-row key/value map of column name to scalar-like value
-
-This may remain useful for generic exchange and debugging. The current formatter serializes byte values as JSON integer arrays; other transport encodings would require explicit compatibility decisions.
-
-However, it is intentionally not the canonical protobuf contract. The protobuf path should instead produce typed messages, optionally wrapped in a typed response envelope that matches the generated proto schema.
-
-That means:
-
-- JSON envelope = generic transport wrapper
-- proto response = typed generated message or typed response envelope
-- message fields must not be derived from a lossy generic envelope
-
-### 3. Strongly typed mapping should use `QueryRows`
-
-For message generation and row mapping, the preferred source is the actual query result (`QueryRows`):
-
-- columns are known
-- row values are typed at the DB boundary
-- validation can happen before message construction
-- mapping logic is explicit and predictable
-- conversion rules are fixed instead of ad hoc
-
-`QueryRows` may be a starting point for:
-
-- repeated message generation
-- typed protobuf serialization
-- validation of output names and types against the target proto schema
-
-## Query contract rules
-
-### 4. One SQL file = one query contract
-
-The project should enforce this rule:
-
-- one `.sql` file contains one query contract
-- one query generates one main contract
-- one file should not hide multiple query shapes
-
-The query handler now loads `.sql` files and enforces one supported statement per file under the [SQL query contract feature](sql-query-contract-feature-reference.md). Associating these contracts with generated protobuf messages remains proposed work.
-
-For multi-query or procedure-driven flows, the system may redirect to stored procedures or dedicated query entry points, but those should still be explicit contracts rather than implicit mixed results.
-
-### 5. Query column aliases should match message field names
-
-The simplest and most reliable rule is:
-
-- SQL output aliases must match the protobuf field names
-- for joins or computed values, alias names must be explicit
-
-Example:
+Example: this SQL file
 
 ```sql
-select
-  u.id as id,
-  u.full_name as name,
-  u.is_active as active
-from users u
+SELECT
+    u.id AS user_id,
+    u.name AS user_name
+FROM users AS u
+WHERE u.id = $user_id
 ```
 
-This maps naturally to:
+has a manifest entry with one `int64` input and two outputs, which produces:
 
 ```proto
-message User {
-  int64 id = 1;
-  string name = 2;
-  bool active = 3;
+message GetUserInput {
+  int64 user_id = 1;
+}
+
+message GetUserOutput {
+  int64 user_id = 1;
+  string user_name = 2;
+}
+
+message GetUserResponse {
+  repeated GetUserOutput items = 1;
 }
 ```
 
-This could be a default convention if generation and mapping are implemented.
-
-### 6. Manual mapping is a fallback, not the default
-
-Manual mapping only applies when the query cannot be expressed in a message-shaped form, such as:
-
-- legacy query compatibility
-- columns that do not match field names
-- derived values
-- joins with repeated or conflicting names
-- stored procedure output shapes that differ from the named contract
-
-The external mapping file can hold exceptions, but the primary flow should still prefer alias-based alignment and schema-driven typing.
-
-## Validation model
-
-### 7. Validation comes from DB schema, column definitions, and alias definitions
-
-Validation must not be based only on message names or a generic transport wrapper. It should be driven by the actual source contract:
-
-- database schema defines column existence and type
-- column definitions define nullability and constraints
-- query aliases define the output names used by the generated message
-- generated proto fields must match the validated output contract
-
-This should happen before message construction, not during row iteration.
-
-The validation checklist should include:
-
-- every required field in the message exists in the query output
-- no duplicate output names exist
-- aliases match the expected names or mapping rules
-- DB types are compatible with the defined Rust and proto conversion rules
-- nullability expectations are acceptable
-- generated message fields align with the query contract
-
-### 8. `buf` validates generated proto, not the SQL contract
-
-`buf` is useful for validating generated protobuf definitions:
-
-- syntax validity
-- linting
-- breaking change detection
-- generated code consistency
-
-`buf` does not validate whether the SQL result actually matches the intended proto structure. That must be the project’s own runtime validation step based on the DB schema and query definition.
-
-## Message generation flow
-
-### 9. Build-time generator creates proto definitions from SQL contracts
-
-A generator tool reads each SQL definition and produces the corresponding proto contract.
-
-Example:
-
-- `get_user.sql` -> `GetUserResponse`
-- `create_user.sql` -> `CreateUserRequest`
-- `update_order.sql` -> `UpdateOrderRequest`
-- `delete_order.sql` -> `DeleteOrderRequest`
-
-The tool should:
-
-1. parse the SQL contract
-2. inspect the columns, parameters, and aliases
-3. validate names and types against schema metadata
-4. generate the `.proto` file and mapping metadata
-5. invoke `buf` or `protoc` to generate the Rust model types
-
-This would be a generation step, not runtime execution logic. No generator or protobuf tooling is currently configured in the repository.
-
-### 10. Read queries generate response messages
-
-For read queries, the output columns define the generated message.
-
-Example:
-
-- `get_user.sql`
-- output columns: `id`, `name`, `email`
-- generated type: `GetUserResponse`
-
-The runtime pattern is:
-
-1. execute query
-2. read `QueryRows`
-3. validate output columns against DB schema and alias contract
-4. map each row into one generated message
-5. serialize that message to JSON or protobuf bytes
-
-### 11. Write queries generate request messages
-
-For write queries, the request parameters define the generated message.
-
-Example:
-
-```sql
-insert into users (name, email)
-values (:name, :email)
-```
-
-Generated request message:
+A write without `RETURNING` has no outputs, so it produces no output message;
+its response carries an affected-row count:
 
 ```proto
-message CreateUserRequest {
+message CreateUserInput {
   string name = 1;
   string email = 2;
 }
-```
 
-If the write query includes a `RETURNING` clause, a separate response message should also be generated from the returned columns.
-
-Thus the pattern becomes:
-
-- write query -> request message from bind parameters
-- write query with `RETURNING` -> response message from returned columns
-
-### 12. CRUD is primarily a message concern
-
-The system is primarily designed around typed CRUD operations in protobuf form:
-
-- create request
-- read response
-- update request
-- delete request/response as needed
-
-This is a proposed way to align generated proto contracts with database operations and message semantics.
-
-The repository does not currently define message contracts or response serialization behavior for protobuf.
-
-### 13. Response envelope may exist, but it is typed per proto contract
-
-A response envelope is acceptable when there is a real API need for it, but it should be defined at the proto layer, not reused from a generic JSON envelope model.
-
-Examples:
-
-```proto
-message GetUsersResponse {
-  repeated User items = 1;
-  int64 count = 2;
-}
-```
-
-or
-
-```proto
 message CreateUserResponse {
-  User item = 1;
+  int64 affected_rows = 1;
 }
 ```
 
-The envelope is therefore message-specific and typed, not a universal generic transport class.
+### 3. Field names and numbers
 
-### 14. Naming convention should be deterministic
+- Field names are the manifest's input and output names. The SQL contract
+  already guarantees they are valid lowercase snake_case and unique.
+- Field numbers are taken from the manifest as they are. The generator never
+  assigns or renumbers them.
+- The manifest's `reserved` entries become protobuf `reserved` statements, so
+  removed numbers and names are never reused.
 
-A file-based naming rule is recommended:
+### 4. Response messages are typed per query
 
-- `get_user.sql` -> `GetUserResponse`
-- `create_user.sql` -> `CreateUserRequest`
-- `update_order.sql` -> `UpdateOrderRequest`
-- `delete_order.sql` -> `DeleteOrderRequest`
+Each response message is specific to its query. The existing generic JSON
+`count`/`items` envelope is not used as a source for message fields.
 
-The exact naming convention should be fixed and enforced so users do not need to hand-maintain message names.
+## Type mapping
 
-## Response formatting layer
+### 5. Manifest type to protobuf type
 
-### 15. Formatter receives a format type and returns the serialized payload
+| Manifest type | Protobuf type |
+|---|---|
+| `int64` | `int64` |
+| `string` | `string` |
+| `bool` | `bool` |
+| `float64` | `double` |
+| `bytes` | `bytes` |
 
-In a future implementation, the formatter layer could decide how a validated message is emitted:
+This table grows with the manifest's type vocabulary. A manifest type with no
+protobuf mapping stops generation with an explicit error.
 
-- JSON output -> string
-- protobuf output -> bytes
+### 6. Nullability
 
-This allows the runtime to keep one internal message-building path while supporting multiple transport encodings.
+Nullable fields must be distinguishable from default values such as `0` or an
+empty string. Whether to use proto3 `optional` or wrapper types is still open
+(QP-1), and the choice must be applied consistently.
 
-Illustrative pseudocode only; `ResponseFormat`, `ResponsePayload`, `Error`, and `SerializeOrProto` are not defined by this repository:
+## Naming
 
-```rust
-enum ResponseFormat {
-    Json,
-    Proto,
-}
+### 7. Deterministic message names
 
-fn format_response<T>(message: T, format: ResponseFormat) -> Result<ResponsePayload, Error>
-where
-    T: SerializeOrProto,
-```
+Message names derive from the last segment of the query `id`:
 
-The payload should be one of:
+- `users/get_user` -> `GetUserInput`, `GetUserOutput`, `GetUserResponse`
+- `users/create_user` -> `CreateUserInput`, `CreateUserOutput` (with `RETURNING`), `CreateUserResponse`
 
-- JSON string for generic transport responses
-- protobuf bytes for typed message responses
+Two queries in different folders with the same file name would produce the
+same message names; how to resolve that is still open (QP-2).
 
-This layer is responsible for serialization only. It is not the source of the contract.
+## Validation
 
-### 16. Service definitions are intentionally out of scope
+### 8. Generated messages must match the manifest
 
-At this stage, the project is not yet defining a gRPC or RPC service layer. The contract is message-driven:
+Generation checks that:
 
-- SQL defines output structure
-- generated proto defines the message schema
-- runtime builds message instances
-- formatter serializes the message to JSON or protobuf bytes
+- every manifest input and output has a field with the same name and number
+- every manifest type has a protobuf mapping
+- nullability is represented as chosen
+- no two queries produce the same message name
 
-This proposal is independent of an RPC service. The current repository provides `QueryRows` and JSON formatting only; it does not build generated messages or serialize protobuf bytes.
+### 9. `buf` validates protobuf, not the query
 
-## External mapping file
+`buf` can check generated definitions for syntax, lint rules, and breaking
+changes. It does not check that messages match the queries; that is the
+manifest's and the generator's job.
 
-If an external mapping file is adopted, it could define the relationship between:
+## Rule set
 
-- query identity
-- generated message name
-- bind fields or output fields
-- optional overrides or type conversions
-- required or optional status
-- response wrapper behavior
+1. Protobuf messages are generated from the manifest only.
+2. Each manifest entry produces one input and one response message, plus an output message only for row-producing operations; writes without `RETURNING` have no output message.
+3. Field names and numbers come from the manifest; reserved entries become protobuf `reserved`.
+4. Manifest types map to protobuf types through a fixed table; unmapped types fail generation.
+5. Nullable fields are distinguishable from default values.
+6. Message names are deterministic and must not collide.
+7. `buf` validates protobuf; the manifest and generator ensure the messages match the queries.
 
-The file should define metadata such as:
+## Open questions
 
-- query name
-- source SQL file
-- target message name
-- field-to-column mapping
-- field type
-- required or optional status
-- conversion rules when needed
+These questions are deliberately left open until they are needed. When one is
+answered, record the decision in the relevant section above and move it to
+**Answered**.
 
-Such a file would be mapping metadata, not the source of truth for query logic. The proposal treats SQL definitions, database schema, and validation metadata as inputs; their precedence and ownership still need to be specified.
+| ID | Question | Needed by |
+|---|---|---|
+| QP-1 | Proto3 `optional` or wrapper types for nullable fields? | Protobuf implementation |
+| QP-2 | How are messages named when query file names collide across folders, for example by using the folder as a package or name prefix? | Protobuf implementation |
+| QP-3 | Do all queries share one `.proto` file, or does each get its own? | Protobuf implementation |
 
-## Migration and schema management
+### Answered
 
-### 17. Migrations are maintained separately
-
-Database migration tracking is not part of the proto generation flow.
-
-The design should keep these concerns separate:
-
-- migrations define schema evolution
-- SQL contract defines query shape
-- proto generation defines typed request/response messages
-- runtime validation checks compatibility between the above
-
-This separation reduces drift and keeps schema changes explicit.
-
-## Recommended rule set
-
-This is the recommended operating model:
-
-1. one SQL file = one query contract
-2. one query = one generated message source
-3. DB schema and column metadata are the validation source of truth
-4. query aliases should match proto field names by default
-5. DB -> Rust -> message -> output format is the conversion pipeline
-6. read queries generate response message definitions
-7. write queries generate request definitions
-8. `RETURNING` queries also generate response definitions
-9. message contracts are the primary interface abstraction
-10. JSON envelope remains a generic transport option
-11. proto envelopes are typed and message-specific
-12. migrations are managed separately
-13. validation happens before row mapping
-14. `buf` validates generated proto, but not SQL-to-proto compatibility
-15. the formatter returns serialized output based on a selected format kind
-16. service definitions are intentionally not included in this phase
-
-## Practical recommendation
-
-If the goal is lower user load, the best workflow is:
-
-- user writes SQL
-- user keeps alias names stable and message-shaped
-- database schema defines the actual data contract
-- generator derives the proto message and mapping metadata
-- runtime validates the query output against database schema and alias metadata
-- generator produces Rust models via `buf` or `protoc`
-- formatter serializes the resulting message to JSON or protobuf bytes
-
-This reduces manual work without losing contract correctness.
-
-## Design conclusion
-
-The proposal's preferred direction is to map query results into generated message models using an explicit DB-to-Rust-to-protobuf conversion table. `QueryRows` alone does not contain database schema metadata or nullability, so the design must define where that information comes from and how it is checked. The existing JSON envelope remains a separate generic formatter output.
-
-The proposal does not require a service layer. Implementing it would still require query-contract discovery, message generation, schema/type validation, row mapping, and a serialization API, none of which exists yet.
-
-The proposal would generate write request messages from bind parameters and response messages from `RETURNING` columns. This depends on defining a bind-parameter model and backend-specific type rules.
+None yet.
